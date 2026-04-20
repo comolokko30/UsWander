@@ -1,0 +1,8 @@
+{
+  "name": "Cansu & Murat: Bizim Rotalarımız",
+  "description": "Cansu ve Murat için özel, gidilecek yerleri planlama, puanlama ve fotoğraf ekleme özellikli, Firebase destekli anı defteri.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}

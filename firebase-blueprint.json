@@ -1,0 +1,27 @@
+{
+  "entities": {
+    "Place": {
+      "title": "Place",
+      "description": "A travel destination or memory",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the place" },
+        "address": { "type": "string", "description": "Address for navigation" },
+        "visited": { "type": "boolean", "description": "Whether the place has been visited" },
+        "rating": { "type": "number", "description": "Rating out of 5" },
+        "note": { "type": "string", "description": "Personal note or memory about the visit" },
+        "photos": { "type": "array", "description": "List of photo URLs stored in cloud" },
+        "visitedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "ownerId": { "type": "string", "description": "ID of the user who added it" }
+      },
+      "required": ["name", "address", "visited"]
+    }
+  },
+  "firestore": {
+    "/places/{placeId}": {
+      "schema": "Place",
+      "description": "Collection of places to visit and memories"
+    }
+  }
+}
