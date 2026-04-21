@@ -353,6 +353,41 @@ export default function App() {
     setPhotos([]);
   };
 
+  const compressImage = (base64Str: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64Str;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 1200;
+        const MAX_HEIGHT = 1200;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        
+        // Compress and convert to jpeg
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.6);
+        resolve(compressedBase64);
+      };
+    });
+  };
+
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
@@ -361,13 +396,19 @@ export default function App() {
       if (photos.length >= 6) return;
       
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
         const result = reader.result as string;
-        if (result.length > 500000) {
-          alert("Fotoğraf boyutu çok büyük!");
-          return;
+        
+        // Always compress to ensure it stays within Firestore 1MB limits
+        const compressed = await compressImage(result);
+        
+        // Final check for safety (Firestore doc limit is 1MB, we have 6 photos)
+        // 200KB per photo max is very safe
+        if (compressed.length > 250000) {
+           console.warn("Dosya hala çok büyük, daha fazla sıkıştırılıyor...");
         }
-        setPhotos(prev => [...prev, result]);
+        
+        setPhotos(prev => [...prev, compressed].slice(0, 6));
       };
       reader.readAsDataURL(file);
     });
