@@ -17,7 +17,13 @@ import {
   Loader2,
   Trash2,
   History,
-  MessageSquareQuote
+  MessageSquareQuote,
+  Filter,
+  Utensils,
+  Coffee,
+  IceCream,
+  Compass,
+  Beer
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -35,7 +41,6 @@ import {
 } from 'firebase/auth';
 import { 
   initializeFirestore,
-  getFirestore, 
   doc, 
   setDoc, 
   collection, 
@@ -84,9 +89,9 @@ const handleFirestoreError = (error: unknown, operation: string, path?: string) 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
-// Connectivity fix: Use initializeFirestore with long polling to bypass network blocks
+// Connectivity fix: Extra stable settings for problematic networks
 const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
+  experimentalAutoDetectLongPolling: true,
 });
 
 /// --- Types ---
@@ -96,11 +101,26 @@ interface Place {
   address: string;
   visited: boolean;
   rating: number;
+  muratRating: number;
+  cansuRating: number;
   note?: string;
   photos: string[];
   visitedAt: Timestamp | null;
   createdAt: Timestamp | null;
+  category: string;
+  isFavorite: boolean;
 }
+
+const CATEGORIES = [
+  { id: 'Yemek', label: 'Yemek', icon: Utensils, color: 'text-amber-500', bg: 'bg-amber-50' },
+  { id: 'Alkol', label: 'Alkol', icon: Beer, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+  { id: 'Kahve', label: 'Kahve', icon: Coffee, color: 'text-orange-700', bg: 'bg-orange-50' },
+  { id: 'Tatlı', label: 'Tatlı', icon: IceCream, color: 'text-pink-500', bg: 'bg-pink-50' },
+  { id: 'Gezi', label: 'Gezi', icon: Compass, color: 'text-blue-500', bg: 'bg-blue-50' },
+];
+
+// --- Helper for Turkish Uppercase ---
+const trUpper = (text: string) => text.toLocaleUpperCase('tr-TR');
 
 // --- Components ---
 
@@ -140,27 +160,58 @@ const Card = ({ children, className, ...props }: React.HTMLAttributes<HTMLDivEle
   </div>
 );
 
-const StarRating = ({ rating, onChange, readonly = false }: { rating: number, onChange?: (r: number) => void, readonly?: boolean }) => {
+const StarRating = ({ rating, onChange, readonly = false, label }: { rating: number, onChange?: (r: number) => void, readonly?: boolean, label?: string }) => {
+  const [hoverRating, setHoverRating] = useState(0);
+  const stars = [1, 2, 3, 4, 5];
+
   return (
-    <div className="flex gap-2">
-      {[1, 2, 3, 4, 5].map((s) => (
-        <button
-          key={s}
-          type="button"
-          onClick={() => !readonly && onChange?.(s)}
-          className={cn(
-            "transition-transform active:scale-150 p-1",
-            readonly ? "cursor-default" : "cursor-pointer"
-          )}
-        >
-          <Star 
-            className={cn(
-              "w-5 h-5",
-              s <= rating ? "fill-amber-400 text-amber-400" : "text-slate-200"
-            )} 
-          />
-        </button>
-      ))}
+    <div className="flex flex-col gap-1.5">
+      {label && <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">{label}</span>}
+      <div className="flex gap-1 items-center bg-slate-50/50 p-2 rounded-2xl border border-slate-100">
+        {stars.map((s) => (
+          <div key={s} className="relative w-7 h-7 flex items-center justify-center">
+            {/* Base Star (Empty) */}
+            <Star className="w-6 h-6 text-slate-200" />
+            
+            {/* Interactive hitboxes */}
+            {!readonly && (
+              <>
+                <div 
+                  className="absolute inset-y-0 left-0 w-1/2 cursor-pointer z-20" 
+                  onClick={() => onChange?.(s - 0.5)}
+                  onMouseEnter={() => setHoverRating(s - 0.5)}
+                  onMouseLeave={() => setHoverRating(0)}
+                />
+                <div 
+                  className="absolute inset-y-0 right-0 w-1/2 cursor-pointer z-20" 
+                  onClick={() => onChange?.(s)}
+                  onMouseEnter={() => setHoverRating(s)}
+                  onMouseLeave={() => setHoverRating(0)}
+                />
+              </>
+            )}
+
+            {/* Visual Layers */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              {(hoverRating || rating) >= s ? (
+                <Star className="w-6 h-6 fill-amber-400 text-amber-400" />
+              ) : (hoverRating || rating) >= s - 0.5 ? (
+                <div className="relative w-6 h-6 overflow-hidden">
+                  <Star className="w-6 h-6 fill-amber-400 text-amber-400 absolute left-0" />
+                  <div className="absolute top-0 right-0 bottom-0 left-1/2 bg-transparent" />
+                  {/* Half star implementation using a clip path or overlay */}
+                  <div className="absolute inset-0 bg-slate-50/50" style={{ clipPath: 'inset(0 0 0 50%)' }}>
+                    <Star className="w-6 h-6 text-slate-200" />
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ))}
+        <span className="ml-3 text-sm font-black text-slate-900 bg-white px-2 py-0.5 rounded-lg border border-slate-100 shadow-sm min-w-[32px] text-center">
+          {rating > 0 ? rating % 1 === 0 ? rating : rating.toFixed(1) : '-'}
+        </span>
+      </div>
     </div>
   );
 };
@@ -171,6 +222,7 @@ export default function App() {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [places, setPlaces] = useState<Place[]>([]);
   const [activeTab, setActiveTab] = useState<'plan' | 'memories' | 'timeline' | 'stats'>('plan');
+  const [selectedCategory, setSelectedCategory] = useState<string | 'Tümü'>('Tümü');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isRatingModalOpen, setIsRatingModalOpen] = useState(false);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
@@ -178,10 +230,12 @@ export default function App() {
   // States for new place
   const [newName, setNewName] = useState('');
   const [newAddress, setNewAddress] = useState('');
+  const [newCategory, setNewCategory] = useState('Yemek');
   const [isAdding, setIsAdding] = useState(false);
 
   // States for rating & memory
-  const [rating, setRating] = useState(5);
+  const [muratRating, setMuratRating] = useState(5);
+  const [cansuRating, setCansuRating] = useState(5);
   const [visitNote, setVisitNote] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -192,7 +246,7 @@ export default function App() {
         await getDocFromServer(doc(db, 'test', 'connection'));
         setConnectionError(null);
       } catch (error) {
-        const err = error as any;
+        const err = error as { code?: string; message?: string };
         // Check for both code and message for maximum compatibility
         if(err?.code === 'permission-denied' || err?.message?.toLowerCase().includes('permission')) {
           console.log("Database connection established (Handshake OK).");
@@ -241,7 +295,9 @@ export default function App() {
       setPlaces(placesData);
     }, (error) => {
       console.error("Firestore listener error:", error);
-      // Handle the "insufficient permissions" error if query doesn't match rules
+      console.error("Current User:", user?.uid || 'Not logged in');
+      console.error("Project ID:", firebaseConfig.projectId);
+      setConnectionError(`Veri erişim hatası: ${error.message} (Giriş: ${user ? 'Başarılı' : 'Bekleniyor'})`);
     });
 
     return () => unsubscribe();
@@ -257,12 +313,17 @@ export default function App() {
         address: newAddress,
         visited: false,
         rating: 0,
+        muratRating: 0,
+        cansuRating: 0,
         photos: [],
         visitedAt: null,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        category: newCategory,
+        isFavorite: false
       });
       setNewName('');
       setNewAddress('');
+      setNewCategory('Yemek');
       setIsAddModalOpen(false);
     } catch (error) {
       console.error("Failed to add place:", error);
@@ -286,7 +347,8 @@ export default function App() {
   const startRating = (id: string) => {
     setSelectedPlaceId(id);
     setIsRatingModalOpen(true);
-    setRating(5);
+    setMuratRating(5);
+    setCansuRating(5);
     setVisitNote('');
     setPhotos([]);
   };
@@ -314,9 +376,12 @@ export default function App() {
   const markAsVisited = async () => {
     if (!selectedPlaceId) return;
     try {
+      const avgRating = (muratRating + cansuRating) / 2;
       await updateDoc(doc(db, 'places', selectedPlaceId), {
         visited: true,
-        rating,
+        rating: avgRating,
+        muratRating,
+        cansuRating,
         note: visitNote,
         photos,
         visitedAt: serverTimestamp(),
@@ -330,18 +395,32 @@ export default function App() {
     }
   };
 
+  const toggleFavorite = async (id: string, current: boolean) => {
+    try {
+      await updateDoc(doc(db, 'places', id), {
+        isFavorite: !current
+      });
+    } catch (error) {
+      console.error("Failed to toggle favorite:", error);
+    }
+  };
+
   const openInMaps = (address: string) => {
     if (!address) return;
     window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`, '_blank');
   };
 
-  const filteredPlaces = places.filter(p => activeTab === 'plan' ? !p.visited : p.visited);
+  const filteredPlaces = places
+    .filter(p => activeTab === 'plan' ? !p.visited : p.visited)
+    .filter(p => selectedCategory === 'Tümü' || p.category === selectedCategory);
+  
   const visitedCount = places.filter(p => p.visited).length;
   const progressPercent = places.length > 0 ? (visitedCount / places.length) * 100 : 0;
 
   // Timeline view groups places by date
   const timelinePlaces = [...places]
     .filter(p => p.visited && p.visitedAt)
+    .filter(p => selectedCategory === 'Tümü' || p.category === selectedCategory)
     .sort((a, b) => b.visitedAt.toMillis() - a.visitedAt.toMillis());
 
   if (loading || connectionError) {
@@ -409,7 +488,6 @@ export default function App() {
             <Heart className="w-5 h-5 text-rose-500 fill-rose-500" />
             <span className="text-xl font-extrabold text-slate-900 tracking-tight">Cansu & Murat</span>
           </div>
-          <p className="text-sm text-slate-500 font-medium ml-7">Yol Aşkımız</p>
 
           <nav className="mt-12 space-y-2">
             <button
@@ -488,16 +566,55 @@ export default function App() {
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
               <div className="space-y-1">
                 <h2 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tighter uppercase">
-                  {activeTab === 'plan' ? 'Nereye Gidiyoruz?' : activeTab === 'timeline' ? 'Zaman Tüneli' : activeTab === 'memories' ? 'Fotoğraflarımız' : 'Bizim Yolumuz'}
+                  {trUpper(activeTab === 'plan' ? 'Nereye Gidiyoruz?' : activeTab === 'timeline' ? 'Zaman Tüneli' : activeTab === 'memories' ? 'Fotoğraflarımız' : 'Bizim Yolumuz')}
                 </h2>
                 <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">
-                   {activeTab === 'plan' ? 'Birlikte Yeni Keşifler Zamanı' : activeTab === 'timeline' ? 'Anıların Kronolojik Yolculuğu' : activeTab === 'memories' ? 'Her Kare Bir Mutluluk' : 'İstatistikler ve Durumumuz'}
+                   {trUpper(activeTab === 'plan' ? 'Birlikte Yeni Keşifler Zamanı' : activeTab === 'timeline' ? 'Anıların Kronolojik Yolculuğu' : activeTab === 'memories' ? 'Her Kare Bir Mutluluk' : 'İstatistikler ve Durumumuz')}
                 </p>
               </div>
-              <Button onClick={() => setIsAddModalOpen(true)} className="px-10 py-5 rounded-2xl text-md shadow-2xl shadow-rose-200/50 hidden md:flex">
-                <Plus className="w-5 h-5" />
-                Yeni Yer Ekle
-              </Button>
+              <motion.div
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+              >
+                <Button onClick={() => setIsAddModalOpen(true)} className="px-10 py-5 rounded-2xl text-md shadow-2xl shadow-rose-200/50 hidden md:flex">
+                  <Plus className="w-5 h-5" />
+                  Yeni Yer Ekle
+                </Button>
+              </motion.div>
+            </div>
+
+            {/* Category Filter */}
+            <div className="flex items-center gap-3 overflow-x-auto pb-4 no-scrollbar -mx-4 md:mx-0 px-4 md:px-0 snap-x snap-mandatory flex-nowrap scroll-smooth">
+               <button
+                 key="all"
+                 onClick={() => setSelectedCategory('Tümü')}
+                 className={cn(
+                   "px-6 py-2.5 rounded-full text-[11px] font-black uppercase tracking-widest transition-all whitespace-nowrap border-2 snap-start",
+                   selectedCategory === 'Tümü' 
+                    ? "bg-slate-900 text-white border-slate-900 shadow-lg shadow-slate-200" 
+                    : "bg-white text-slate-400 border-slate-100 hover:border-slate-300"
+                 )}
+               >
+                 {trUpper("Tümü")}
+               </button>
+               {CATEGORIES.map((cat) => {
+                 const Icon = cat.icon;
+                 return (
+                   <button
+                     key={cat.id}
+                     onClick={() => setSelectedCategory(cat.id)}
+                     className={cn(
+                       "flex items-center gap-2 px-6 py-2.5 rounded-full text-[11px] font-black uppercase tracking-widest transition-all whitespace-nowrap border-2 snap-start",
+                       selectedCategory === cat.id
+                        ? "bg-rose-500 text-white border-rose-500 shadow-lg shadow-rose-100" 
+                        : "bg-white text-slate-400 border-slate-100 hover:border-slate-300"
+                     )}
+                   >
+                     <Icon className="w-3.5 h-3.5" />
+                     {trUpper(cat.label)}
+                   </button>
+                 );
+               })}
             </div>
 
             {/* Content Switcher */}
@@ -505,53 +622,84 @@ export default function App() {
               {activeTab === 'plan' && (
                 <motion.div
                   key="plan"
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 10 }}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
                   className="grid grid-cols-1 md:grid-cols-2 gap-5"
                 >
                   {filteredPlaces.length === 0 ? (
                     <div className="col-span-full py-20 flex flex-col items-center justify-center text-center space-y-4">
                       <div className="w-20 h-20 bg-white rounded-3xl shadow-sm border border-slate-100 flex items-center justify-center text-slate-200">
-                         <MapPin className="w-10 h-10" />
+                         <Filter className="w-10 h-10" />
                       </div>
-                      <p className="text-slate-400 font-bold max-w-xs text-sm">Haritada seçtiğimiz o yer henüz yok. Hadi bir rota ekleyelim!</p>
+                      <p className="text-slate-400 font-bold max-w-xs text-sm">Aradığınız kategoride henüz plan yapmamışız. Hadi bir tane ekleyelim!</p>
                     </div>
                   ) : (
-                    filteredPlaces.map((place) => (
-                      <Card key={place.id} className="group relative flex flex-col justify-between border-slate-200/50 hover:border-rose-400/30 transition-all">
-                        <div className="space-y-4">
-                          <div className="flex justify-between items-start gap-4">
-                            <h3 className="text-xl font-black text-slate-900 leading-tight group-hover:text-rose-500 transition-colors uppercase tracking-tight">{place.name}</h3>
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                deletePlace(place.id);
-                              }} 
-                              className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-50 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-all shadow-sm border border-slate-100"
-                              title="Sil"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                          <p className="text-xs text-slate-400 font-bold flex items-center gap-1.5 uppercase tracking-tighter truncate">
-                            <MapPin className="w-4 h-4 text-emerald-400" />
-                            {place.address}
-                          </p>
-                        </div>
+                    filteredPlaces
+                      .sort((a, b) => (b.isFavorite ? 1 : 0) - (a.isFavorite ? 1 : 0))
+                      .map((place) => {
+                        const cat = CATEGORIES.find(c => c.id === place.category) || CATEGORIES[0];
+                        const CatIcon = cat.icon;
+                        return (
+                          <motion.div
+                            key={place.id}
+                            whileHover={{ y: -5 }}
+                            layout
+                          >
+                            <Card className="group relative h-full flex flex-col justify-between border-slate-200/50 hover:border-rose-400/30 transition-all">
+                              <div className="space-y-4">
+                                <div className="flex justify-between items-start gap-4">
+                                  <div className="space-y-1">
+                                    <div className={cn("inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest mb-1", cat.bg, cat.color)}>
+                                      <CatIcon className="w-2.5 h-2.5" />
+                                      {trUpper(cat.label)}
+                                    </div>
+                                    <h3 className="text-xl font-black text-slate-900 leading-tight group-hover:text-rose-500 transition-colors uppercase tracking-tight">{trUpper(place.name)}</h3>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => toggleFavorite(place.id, place.isFavorite)}
+                                      className={cn(
+                                        "w-10 h-10 flex items-center justify-center rounded-full transition-all shadow-sm border",
+                                        place.isFavorite 
+                                          ? "bg-rose-50 border-rose-100 text-rose-500" 
+                                          : "bg-slate-50 border-slate-100 text-slate-300 hover:text-rose-400"
+                                      )}
+                                    >
+                                      <Heart className={cn("w-4 h-4", place.isFavorite ? "fill-rose-500" : "")} />
+                                    </button>
+                                    <button 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        deletePlace(place.id);
+                                      }} 
+                                      className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-50 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-all shadow-sm border border-slate-100"
+                                      title="Sil"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                                <p className="text-xs text-slate-400 font-bold flex items-center gap-1.5 uppercase tracking-tighter truncate">
+                                  <MapPin className="w-4 h-4 text-emerald-400" />
+                                  {place.address}
+                                </p>
+                              </div>
 
-                        <div className="mt-8 flex gap-3">
-                          <Button variant="secondary" className="flex-1 rounded-xl" onClick={() => openInMaps(place.address)}>
-                            <Navigation className="w-4 h-4 text-rose-500" />
-                            <span className="hidden sm:inline">Navigasyon</span>
-                          </Button>
-                          <Button variant="dark" className="flex-1 rounded-xl" onClick={() => startRating(place.id)}>
-                            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                            <span className="hidden sm:inline">Gittik</span>
-                          </Button>
-                        </div>
-                      </Card>
-                    ))
+                              <div className="mt-8 flex gap-3">
+                                <Button variant="secondary" className="flex-1 rounded-xl" onClick={() => openInMaps(place.address)}>
+                                  <Navigation className="w-4 h-4 text-rose-500" />
+                                  <span className="hidden sm:inline tracking-widest font-black text-[10px] uppercase">Navigasyon</span>
+                                </Button>
+                                <Button variant="dark" className="flex-1 rounded-xl" onClick={() => startRating(place.id)}>
+                                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                                  <span className="hidden sm:inline tracking-widest font-black text-[10px] uppercase">Gittik</span>
+                                </Button>
+                              </div>
+                            </Card>
+                          </motion.div>
+                        );
+                      })
                   )}
                 </motion.div>
               )}
@@ -591,18 +739,37 @@ export default function App() {
                                     "flex items-center gap-4",
                                     index % 2 === 0 ? "md:flex-row-reverse" : "md:flex-row"
                                   )}>
-                                    <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest">
-                                      {format(place.visitedAt.toDate(), 'd MMMM yyyy, EEEE', { locale: tr })}
-                                    </span>
-                                    <button 
-                                      onClick={() => deletePlace(place.id)}
-                                      className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-50 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-all shadow-sm border border-slate-100 ml-auto md:ml-0"
-                                      title="Anıyı Sil"
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                    </button>
+                                    <div className="flex flex-col items-start md:items-end">
+                                      <div className={cn("inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest mb-1", (CATEGORIES.find(c => c.id === place.category) || CATEGORIES[0]).bg, (CATEGORIES.find(c => c.id === place.category) || CATEGORIES[0]).color)}>
+                                        {React.createElement((CATEGORIES.find(c => c.id === place.category) || CATEGORIES[0]).icon, { className: "w-2.5 h-2.5" })}
+                                        {trUpper((CATEGORIES.find(c => c.id === place.category) || CATEGORIES[0]).label)}
+                                      </div>
+                                      <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest">
+                                        {format(place.visitedAt.toDate(), 'd MMMM yyyy, EEEE', { locale: tr })}
+                                      </span>
+                                    </div>
+                                    <div className="flex gap-2 ml-auto md:ml-0">
+                                      <button
+                                        onClick={() => toggleFavorite(place.id, place.isFavorite)}
+                                        className={cn(
+                                          "w-10 h-10 flex items-center justify-center rounded-full transition-all shadow-sm border",
+                                          place.isFavorite 
+                                            ? "bg-rose-50 border-rose-100 text-rose-500" 
+                                            : "bg-slate-50 border-slate-100 text-slate-300 hover:text-rose-400"
+                                        )}
+                                      >
+                                        <Heart className={cn("w-4 h-4", place.isFavorite ? "fill-rose-500" : "")} />
+                                      </button>
+                                      <button 
+                                        onClick={() => deletePlace(place.id)}
+                                        className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-50 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-all shadow-sm border border-slate-100"
+                                        title="Anıyı Sil"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
+                                    </div>
                                   </div>
-                                  <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">{place.name}</h3>
+                                  <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">{trUpper(place.name)}</h3>
                                </div>
 
                                {place.note && (
@@ -631,8 +798,21 @@ export default function App() {
                                  </div>
                                )}
 
-                               <div className="mt-6 flex items-center gap-1.5 md:justify-end group-even:md:justify-start">
-                                  <StarRating rating={place.rating} readonly />
+                               <div className="mt-6 flex flex-wrap items-center gap-4 md:justify-end group-even:md:justify-start">
+                                  <div className="flex flex-col md:items-end">
+                                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">{trUpper("Ortalama Puan")}</span>
+                                    <StarRating rating={place.rating} readonly />
+                                  </div>
+                                  <div className="flex gap-4">
+                                     <div className="flex flex-col items-center">
+                                        <span className="text-[7px] font-black text-rose-300 uppercase tracking-tighter">MURAT</span>
+                                        <span className="text-xs font-black text-slate-600">{place.muratRating || '-'}</span>
+                                     </div>
+                                     <div className="flex flex-col items-center">
+                                        <span className="text-[7px] font-black text-rose-300 uppercase tracking-tighter">CANSU</span>
+                                        <span className="text-xs font-black text-slate-600">{place.cansuRating || '-'}</span>
+                                     </div>
+                                  </div>
                                </div>
                             </Card>
                          </div>
@@ -684,14 +864,14 @@ export default function App() {
                       <Heart className="w-10 h-10 text-rose-500 fill-rose-500 animate-pulse" />
                     </div>
                     <div className="space-y-1">
-                      <h3 className="text-3xl font-black text-slate-900 tracking-tighter uppercase">Neredeyse Her Yerdeyiz!</h3>
+                      <h3 className="text-3xl font-black text-slate-900 tracking-tighter uppercase">{trUpper("Neredeyse Her Yerdeyiz!")}</h3>
                       <p className="text-slate-400 font-medium text-sm">Cansu & Murat'ın keşif serüveni</p>
                     </div>
 
                     <div className="w-full space-y-8 pt-4">
                        <div className="space-y-3">
                           <div className="flex justify-between items-end px-1">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">TOPLAM KEŞİF</span>
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{trUpper("TOPLAM KEŞİF")}</span>
                             <span className="text-2xl font-black text-slate-900">{visitedCount} / {places.length}</span>
                           </div>
                           <div className="h-4 bg-slate-100 rounded-full overflow-hidden p-1 shadow-inner">
@@ -701,19 +881,19 @@ export default function App() {
                               className="h-full bg-rose-500 rounded-full shadow-lg"
                             />
                           </div>
-                          <p className="text-center text-[10px] font-black text-rose-500 uppercase tracking-widest">% {Math.round(progressPercent)} TAMAMLANDI</p>
+                          <p className="text-center text-[10px] font-black text-rose-500 uppercase tracking-widest">% {Math.round(progressPercent)} {trUpper("TAMAMLANDI")}</p>
                        </div>
 
                        <div className="grid grid-cols-2 gap-4">
                           <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
-                             <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">BEKLEYEN</div>
+                             <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{trUpper("BEKLEYEN")}</div>
                              <div className="text-3xl font-black text-slate-900">{places.length - visitedCount}</div>
-                             <div className="text-[9px] font-bold text-slate-300 mt-1">YENİ MACERA</div>
+                             <div className="text-[9px] font-bold text-slate-300 mt-1">{trUpper("YENİ MACERA")}</div>
                           </div>
                           <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
-                             <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">ANILAR</div>
+                             <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{trUpper("ANILAR")}</div>
                              <div className="text-3xl font-black text-slate-900">{places.filter(p => p.visited).flatMap(p => p.photos || []).length}</div>
-                             <div className="text-[9px] font-bold text-slate-300 mt-1">FOTOĞRAF</div>
+                             <div className="text-[9px] font-bold text-slate-300 mt-1">{trUpper("FOTOĞRAF")}</div>
                           </div>
                        </div>
                     </div>
@@ -731,7 +911,7 @@ export default function App() {
              className={cn("flex flex-col items-center justify-center gap-1.5 h-full transition-all rounded-3xl", activeTab === 'plan' ? "text-rose-400" : "text-slate-500")}
            >
              <MapPin className={cn("w-5 h-5", activeTab === 'plan' ? "fill-rose-400/20" : "")} />
-             <span className="text-[8px] font-black uppercase tracking-tighter">PLANLAR</span>
+             <span className="text-[8px] font-black uppercase tracking-tighter">{trUpper("Planlar")}</span>
            </button>
 
            <button 
@@ -739,7 +919,7 @@ export default function App() {
              className={cn("flex flex-col items-center justify-center gap-1.5 h-full transition-all rounded-3xl", activeTab === 'timeline' ? "text-rose-400" : "text-slate-500")}
            >
              <History className={cn("w-5 h-5", activeTab === 'timeline' ? "fill-rose-400/20" : "")} />
-             <span className="text-[8px] font-black uppercase tracking-tighter">TÜNEL</span>
+             <span className="text-[8px] font-black uppercase tracking-tighter">{trUpper("Tünel")}</span>
            </button>
 
            <div className="flex items-center justify-center">
@@ -756,7 +936,7 @@ export default function App() {
              className={cn("flex flex-col items-center justify-center gap-1.5 h-full transition-all rounded-3xl", activeTab === 'memories' ? "text-rose-400" : "text-slate-500")}
            >
              <Camera className={cn("w-5 h-5", activeTab === 'memories' ? "fill-rose-400/20" : "")} />
-             <span className="text-[8px] font-black uppercase tracking-tighter">GALERİ</span>
+             <span className="text-[8px] font-black uppercase tracking-tighter">{trUpper("Galeri")}</span>
            </button>
 
            <button 
@@ -764,7 +944,7 @@ export default function App() {
              className={cn("flex flex-col items-center justify-center gap-1.5 h-full transition-all rounded-3xl", activeTab === 'stats' ? "text-rose-400" : "text-slate-500")}
            >
              <Heart className={cn("w-5 h-5", activeTab === 'stats' ? "fill-rose-400/20" : "")} />
-             <span className="text-[8px] font-black uppercase tracking-tighter">DURUM</span>
+             <span className="text-[8px] font-black uppercase tracking-tighter">{trUpper("Durum")}</span>
            </button>
         </nav>
       </div>
@@ -773,7 +953,7 @@ export default function App() {
       <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="Nereyi Planlayalım?">
         <div className="space-y-6">
           <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">MEKAN İSMİ</label>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">{trUpper("MEKAN İSMİ")}</label>
             <input 
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
@@ -782,13 +962,37 @@ export default function App() {
             />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">ADRES / KONUM</label>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">{trUpper("ADRES / KONUM")}</label>
             <input 
               value={newAddress}
               onChange={(e) => setNewAddress(e.target.value)}
               placeholder="Adres bilgisi buraya..."
               className="w-full bg-slate-50 border-2 border-slate-100 focus:border-slate-900 focus:bg-white px-5 py-4 rounded-2xl outline-none transition-all placeholder:text-slate-300 font-bold text-lg"
             />
+          </div>
+
+          <div className="space-y-3">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">{trUpper("KATEGORİ SEÇİN")}</label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+               {CATEGORIES.map((cat) => {
+                 const Icon = cat.icon;
+                 return (
+                   <button
+                     key={cat.id}
+                     onClick={() => setNewCategory(cat.id)}
+                     className={cn(
+                       "flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all group",
+                       newCategory === cat.id 
+                        ? "bg-rose-50 border-rose-500 text-rose-600" 
+                        : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"
+                     )}
+                   >
+                     <Icon className={cn("w-5 h-5", newCategory === cat.id ? "text-rose-500" : "text-slate-300 group-hover:text-slate-400")} />
+                     <span className="text-[9px] font-black uppercase tracking-tight">{trUpper(cat.label)}</span>
+                   </button>
+                 );
+               })}
+            </div>
           </div>
           <Button onClick={addPlace} variant="dark" className="w-full py-6 text-lg rounded-3xl shadow-xl mt-4" loading={isAdding}>
             Listeye Kaydet ✨
@@ -798,10 +1002,22 @@ export default function App() {
 
       <Modal isOpen={isRatingModalOpen} onClose={() => setIsRatingModalOpen(false)} title="Anıları Kaydet">
         <div className="space-y-8">
-          <div className="bg-slate-50 p-6 sm:p-8 rounded-[2.5rem] border border-slate-100 flex flex-col items-center gap-4">
-             <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.2em]">BU GEZİYE PUANINIZ</p>
-             <StarRating rating={rating} onChange={setRating} />
-             <div className="text-3xl font-black text-slate-900 tracking-tighter">{rating}.0 / 5.0</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+             <StarRating 
+               label="Murat'ın Puanı" 
+               rating={muratRating} 
+               onChange={setMuratRating} 
+             />
+             <StarRating 
+               label="Cansu'nun Puanı" 
+               rating={cansuRating} 
+               onChange={setCansuRating} 
+             />
+          </div>
+
+          <div className="bg-rose-50/50 p-4 rounded-2xl border border-rose-100 flex justify-between items-center">
+             <span className="text-[10px] font-black text-rose-400 uppercase tracking-widest">{trUpper("Ortalama")}</span>
+             <span className="text-xl font-black text-rose-600 tracking-tighter">{((muratRating + cansuRating) / 2).toFixed(1)} Puan</span>
           </div>
 
           <div className="space-y-3">

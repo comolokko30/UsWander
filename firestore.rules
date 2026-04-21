@@ -11,10 +11,6 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
-    }
-
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -29,11 +25,15 @@ service cloud.firestore {
 
     // --- Entity Validation ---
     function isValidPlace(data) {
-      return data.keys().hasAll(['name', 'address', 'visited', 'rating', 'photos', 'createdAt']) &&
+      return data.keys().hasAll(['name', 'address', 'visited', 'rating', 'photos', 'createdAt', 'category', 'isFavorite', 'muratRating', 'cansuRating']) &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
              data.address is string && data.address.size() <= 500 &&
              data.visited is bool &&
+             data.isFavorite is bool &&
+             data.category is string && data.category.size() <= 50 &&
              data.rating is number && data.rating >= 0 && data.rating <= 5 &&
+             data.muratRating is number && data.muratRating >= 0 && data.muratRating <= 5 &&
+             data.cansuRating is number && data.cansuRating >= 0 && data.cansuRating <= 5 &&
              data.photos is list && data.photos.size() <= 6 &&
              (data.visited == false || (data.visited == true && data.keys().hasAll(['visitedAt', 'note'])));
     }
@@ -44,28 +44,28 @@ service cloud.firestore {
     }
 
     match /places/{placeId} {
-      // TEST: Okuma iznini geçici olarak herkese açarak sorunu daraltıyoruz
-      allow read: if true;
+      // Murat ve Cansu için açık erişim (Giriş yapan herkes okuyabilir)
+      allow read: if true; // Geçici olarak okumayı açık bırakıyorum ki test edilebilsin
       
-      allow create: if request.auth != null && 
+      allow create: if isSignedIn() && 
                       isValidId(placeId) && 
                       isValidPlace(incoming()) &&
                       incoming().createdAt == request.time &&
                       incoming().visited == false;
 
-      allow update: if request.auth != null &&
+      allow update: if isSignedIn() &&
                       isValidPlace(incoming()) &&
                       incoming().createdAt == existing().createdAt &&
                       (
                         // Action: Mark as Visited
                         (existing().visited == false && incoming().visited == true && 
                          incoming().visitedAt == request.time &&
-                         incoming().diff(existing()).affectedKeys().hasAll(['visited', 'visitedAt', 'rating', 'note', 'photos'])) ||
-                        // Action: Casual update (name/address)
-                        (incoming().diff(existing()).affectedKeys().hasOnly(['name', 'address', 'photos', 'rating', 'note']))
+                         incoming().diff(existing()).affectedKeys().hasAll(['visited', 'visitedAt', 'rating', 'note', 'photos', 'muratRating', 'cansuRating'])) ||
+                        // Action: Toggle Favorite or Edit Basic Info
+                        (incoming().diff(existing()).affectedKeys().hasAny(['name', 'address', 'photos', 'rating', 'note', 'isFavorite', 'category', 'muratRating', 'cansuRating']))
                       );
 
-      allow delete: if request.auth != null;
+      allow delete: if isSignedIn();
     }
   }
 }

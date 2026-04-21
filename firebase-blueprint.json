@@ -13,9 +13,13 @@
         "photos": { "type": "array", "description": "List of photo URLs stored in cloud" },
         "visitedAt": { "type": "string", "format": "date-time" },
         "createdAt": { "type": "string", "format": "date-time" },
+        "category": { "type": "string", "description": "Category like Yemek, Alkol, etc" },
+        "isFavorite": { "type": "boolean", "description": "Whether the place is a favorite" },
+        "muratRating": { "type": "number", "description": "Rating given by Murat" },
+        "cansuRating": { "type": "number", "description": "Rating given by Cansu" },
         "ownerId": { "type": "string", "description": "ID of the user who added it" }
       },
-      "required": ["name", "address", "visited"]
+      "required": ["name", "address", "visited", "category", "isFavorite", "muratRating", "cansuRating"]
     }
   },
   "firestore": {
