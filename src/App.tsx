@@ -349,7 +349,7 @@ export default function App() {
             try {
               new Notification('Cansu & Murat', {
                 body: newData.text,
-                icon: 'https://cdn-icons-png.flaticon.com/512/833/833472.png'
+                icon: 'https://img.icons8.com/emoji/512/red-heart.png'
               });
             } catch (e) {
               console.error("Browser notification failed:", e);

@@ -27,8 +27,8 @@ self.addEventListener('push', event => {
   
   const options = {
     body: data.body,
-    icon: 'https://cdn-icons-png.flaticon.com/512/833/833472.png',
-    badge: 'https://cdn-icons-png.flaticon.com/512/833/833472.png',
+    icon: 'https://img.icons8.com/emoji/512/red-heart.png',
+    badge: 'https://img.icons8.com/emoji/512/red-heart.png',
     vibrate: [100, 50, 100],
     data: {
       url: self.location.origin
