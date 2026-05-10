@@ -38,6 +38,12 @@ service cloud.firestore {
              (data.visited == false || (data.visited == true && data.keys().hasAll(['visitedAt', 'note'])));
     }
 
+    function isValidNotification(data) {
+      return data.keys().hasAll(['text', 'sender', 'type', 'createdAt', 'isRead']) &&
+             data.text is string && data.sender is string && data.type is string &&
+             data.isRead is bool;
+    }
+
     // --- Handshake ---
     match /test/connection {
       allow read: if true;
@@ -65,6 +71,13 @@ service cloud.firestore {
                         (incoming().diff(existing()).affectedKeys().hasAny(['name', 'address', 'photos', 'rating', 'note', 'isFavorite', 'category', 'muratRating', 'cansuRating']))
                       );
 
+      allow delete: if isSignedIn();
+    }
+
+    match /notifications/{notifId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isValidNotification(incoming()) && incoming().createdAt == request.time;
+      allow update: if isSignedIn() && incoming().diff(existing()).affectedKeys().hasOnly(['isRead']);
       allow delete: if isSignedIn();
     }
   }

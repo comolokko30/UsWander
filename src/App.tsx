@@ -23,7 +23,9 @@ import {
   Coffee,
   IceCream,
   Compass,
-  Beer
+  Beer,
+  Bell,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -42,7 +44,8 @@ import {
 import { 
   initializeFirestore,
   doc, 
-  setDoc, 
+  setDoc,
+  addDoc, 
   collection, 
   onSnapshot, 
   query, 
@@ -51,7 +54,8 @@ import {
   serverTimestamp,
   updateDoc,
   getDocFromServer,
-  Timestamp
+  Timestamp,
+  limit
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -109,6 +113,15 @@ interface Place {
   createdAt: Timestamp | null;
   category: string;
   isFavorite: boolean;
+}
+
+interface Notification {
+  id: string;
+  text: string;
+  sender: string;
+  type: 'add' | 'visit';
+  createdAt: Timestamp;
+  isRead: boolean;
 }
 
 const CATEGORIES = [
@@ -226,6 +239,14 @@ export default function App() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isRatingModalOpen, setIsRatingModalOpen] = useState(false);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  
+  // Notification States
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const [userName, setUserName] = useState<string | null>(localStorage.getItem('couple_app_user_name'));
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
+    typeof Notification !== 'undefined' ? Notification.permission : 'default'
+  );
 
   // States for new place
   const [newName, setNewName] = useState('');
@@ -277,6 +298,14 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Set Identity based on email
+  useEffect(() => {
+    if (user?.email === 'muratcanturk892@gmail.com') {
+      setUserName('Murat');
+      localStorage.setItem('couple_app_user_name', 'Murat');
+    }
+  }, [user]);
+
   // Data Listener
   useEffect(() => {
     if (!user) return;
@@ -295,13 +324,69 @@ export default function App() {
       setPlaces(placesData);
     }, (error) => {
       console.error("Firestore listener error:", error);
-      console.error("Current User:", user?.uid || 'Not logged in');
-      console.error("Project ID:", firebaseConfig.projectId);
-      setConnectionError(`Veri erişim hatası: ${error.message} (Giriş: ${user ? 'Başarılı' : 'Bekleniyor'})`);
     });
 
-    return () => unsubscribe();
+    // Notifications Listener
+    const notifQ = query(
+      collection(db, 'notifications'),
+      orderBy('createdAt', 'desc'),
+      limit(20)
+    );
+    const unsubscribeNotif = onSnapshot(notifQ, (snapshot) => {
+      const notifData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Notification[];
+      
+      // Trigger browser notification for NEW notifications if they are not from current user
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === "added") {
+          const newData = change.doc.data() as any;
+          const isFromOtherUser = newData.sender !== userName;
+          const isRecent = (Date.now() - (newData.createdAt?.toMillis() || 0)) < 10000;
+          
+          if (isFromOtherUser && isRecent && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            try {
+              new Notification('Cansu & Murat', {
+                body: newData.text,
+                icon: 'https://cdn-icons-png.flaticon.com/512/833/833472.png'
+              });
+            } catch (e) {
+              console.error("Browser notification failed:", e);
+            }
+          }
+        }
+      });
+
+      setNotifications(notifData);
+    });
+
+    return () => {
+      unsubscribe();
+      unsubscribeNotif();
+    };
   }, [user]);
+
+  const requestNotifPermission = async () => {
+    if (!('Notification' in window)) return;
+    const permission = await Notification.requestPermission();
+    setNotifPermission(permission);
+  };
+
+  const sendNotification = async (text: string, type: 'add' | 'visit') => {
+    try {
+      const notifCol = collection(db, 'notifications');
+      await addDoc(notifCol, {
+        text,
+        sender: userName || 'Gizemli Biri',
+        type,
+        createdAt: serverTimestamp(),
+        isRead: false
+      });
+    } catch (error) {
+      console.error("Notif failed:", error);
+    }
+  };
 
   const addPlace = async () => {
     if (!newName.trim() || !user) return;
@@ -325,6 +410,9 @@ export default function App() {
       setNewAddress('');
       setNewCategory('Yemek');
       setIsAddModalOpen(false);
+
+      // Send Notif
+      sendNotification(`${newName} mekanı listemize eklendi! ✨`, 'add');
     } catch (error) {
       console.error("Failed to add place:", error);
       handleFirestoreError(error, 'create', 'places');
@@ -430,6 +518,10 @@ export default function App() {
       setIsRatingModalOpen(false);
       setSelectedPlaceId(null);
       setActiveTab('timeline');
+
+      // Send Notif
+      const placeName = places.find(p => p.id === selectedPlaceId)?.name || 'Bir mekan';
+      sendNotification(`${placeName} ziyaret edildi ve anılara eklendi! ❤️`, 'visit');
     } catch (error) {
       console.error("Failed to mark visited:", error);
       handleFirestoreError(error, 'update', `places/${selectedPlaceId}`);
@@ -525,10 +617,101 @@ export default function App() {
       {/* Sidebar - Desktop Only */}
       <aside className="hidden lg:flex flex-col w-[300px] bg-white border-r border-slate-200 p-8 justify-between shrink-0 shadow-sm">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Heart className="w-5 h-5 text-rose-500 fill-rose-500" />
-            <span className="text-xl font-extrabold text-slate-900 tracking-tight">Cansu & Murat</span>
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              <Heart className="w-5 h-5 text-rose-500 fill-rose-500" />
+              <span className="text-xl font-extrabold text-slate-900 tracking-tight">Cansu & Murat</span>
+            </div>
+            
+            <div className="relative">
+              <button 
+                onClick={() => setIsNotifOpen(!isNotifOpen)}
+                className="p-2 text-slate-400 hover:text-slate-900 transition-colors relative"
+              >
+                <Bell className="w-5 h-5" />
+                {notifications.filter(n => !n.isRead).length > 0 && (
+                  <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full border-2 border-white" />
+                )}
+              </button>
+
+              <AnimatePresence>
+                {isNotifOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                    className="absolute left-0 mt-2 w-64 bg-white rounded-3xl shadow-2xl border border-slate-100 z-50 p-2 overflow-hidden"
+                  >
+                    <div className="p-4 border-b border-slate-50 flex justify-between items-center">
+                       <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Bildirimler</span>
+                       <button 
+                         onClick={() => {
+                            notifications.forEach(n => updateDoc(doc(db, 'notifications', n.id), { isRead: true }));
+                         }}
+                         className="text-[9px] font-bold text-rose-500 uppercase"
+                       >
+                         Hepsini Oku
+                       </button>
+                    </div>
+                    <div className="max-h-80 overflow-y-auto custom-scrollbar">
+                       {notifications.length === 0 ? (
+                         <div className="p-8 text-center text-slate-300 text-[10px] font-bold uppercase tracking-widest">Henüz bildirim yok</div>
+                       ) : (
+                         notifications.map(n => (
+                           <div key={n.id} className={cn("p-4 border-b border-slate-50 last:border-0", !n.isRead ? "bg-rose-50/30" : "opacity-60")}>
+                              <div className="flex gap-3">
+                                 <div className={cn("w-2 h-2 mt-1 rounded-full shrink-0", n.type === 'add' ? "bg-blue-400" : "bg-rose-400")} />
+                                 <div className="space-y-1">
+                                    <p className="text-[11px] font-bold text-slate-800 leading-tight">{n.text}</p>
+                                    <div className="flex items-center gap-2">
+                                       <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">{n.sender}</span>
+                                       <span className="text-[8px] font-medium text-slate-300">•</span>
+                                       <span className="text-[8px] font-medium text-slate-300">{format(n.createdAt?.toDate() || new Date(), 'HH:mm', { locale: tr })}</span>
+                                    </div>
+                                 </div>
+                              </div>
+                           </div>
+                         ))
+                       )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
+          
+          <div className="mt-4 p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
+             <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-rose-500 rounded-full flex items-center justify-center text-white text-[10px] font-black">
+                   {userName ? userName[0] : '?'}
+                </div>
+                <div>
+                   <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Hoş Geldin</p>
+                   <p className="text-xs font-bold text-slate-900">{userName || 'Kiminle Geziyoruz?'}</p>
+                </div>
+             </div>
+             {!userName && (
+               <div className="flex gap-1">
+                  <button onClick={() => { setUserName('Murat'); localStorage.setItem('couple_app_user_name', 'Murat'); }} className="px-2 py-1 bg-white border border-slate-200 rounded-lg text-[9px] font-black text-slate-600 hover:border-rose-500">MURAT</button>
+                  <button onClick={() => { setUserName('Cansu'); localStorage.setItem('couple_app_user_name', 'Cansu'); }} className="px-2 py-1 bg-white border border-slate-200 rounded-lg text-[9px] font-black text-slate-600 hover:border-rose-500">CANSU</button>
+               </div>
+             )}
+          </div>
+
+          {(notifPermission === 'default' || notifPermission === 'denied') && (
+            <div className="mt-4 p-4 bg-amber-50 rounded-2xl border border-amber-100 space-y-3">
+              <p className="text-[10px] font-bold text-amber-800 leading-tight">Telefona bildirim gelmesi için izin vermen ve uygulamayı yüklemen lazım!</p>
+              <button 
+                onClick={requestNotifPermission}
+                className="w-full py-2 bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-sm hover:bg-amber-600"
+              >
+                BİLDİRİMLERİ ETKİNLEŞTİR
+              </button>
+              <div className="pt-2 border-t border-amber-200/50">
+                 <p className="text-[9px] text-amber-700 italic">iPhone için: Paylaş → Ana Ekrana Ekle</p>
+              </div>
+            </div>
+          )}
 
           <nav className="mt-12 space-y-2">
             <button
@@ -594,12 +777,95 @@ export default function App() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-full bg-slate-50 overflow-hidden relative">
         {/* Top Bar - Mobile Title */}
-        <header className="lg:hidden h-16 bg-white/80 backdrop-blur-md border-b border-slate-200 flex items-center justify-center sticky top-0 z-40 shrink-0">
+        <header className="lg:hidden h-16 bg-white/80 backdrop-blur-md border-b border-slate-200 flex items-center justify-between px-6 sticky top-0 z-40 shrink-0">
           <div className="flex items-center gap-2">
             <Heart className="w-5 h-5 text-rose-500 fill-rose-500" />
             <h1 className="text-lg font-black text-slate-900 tracking-tighter">Cansu & Murat</h1>
           </div>
+
+          <div className="flex items-center gap-4">
+             <button 
+               onClick={() => setIsNotifOpen(!isNotifOpen)}
+               className="relative p-2"
+             >
+                <Bell className="w-5 h-5 text-slate-600" />
+                {notifications.filter(n => !n.isRead).length > 0 && (
+                  <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full border-2 border-white" />
+                )}
+             </button>
+             
+             <button 
+               onClick={() => {
+                 const name = userName === 'Murat' ? 'Cansu' : 'Murat';
+                 setUserName(name);
+                 localStorage.setItem('couple_app_user_name', name);
+               }}
+               className="w-8 h-8 bg-rose-100 rounded-full flex items-center justify-center text-rose-600 text-[10px] font-black border border-rose-200"
+             >
+                {userName ? userName[0] : '?'}
+             </button>
+          </div>
+
+          {/* Mobile Notif Dropdown */}
+          <AnimatePresence>
+            {isNotifOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="absolute top-16 right-6 w-72 bg-white rounded-3xl shadow-2xl border border-slate-100 z-50 p-2"
+              >
+                <div className="p-4 border-b border-slate-50 flex justify-between items-center">
+                   <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Bildirimler</span>
+                   <button 
+                     onClick={() => {
+                        notifications.forEach(n => updateDoc(doc(db, 'notifications', n.id), { isRead: true }));
+                     }}
+                     className="text-[9px] font-bold text-rose-500 uppercase"
+                   >
+                     Hepsini Oku
+                   </button>
+                </div>
+                <div className="max-h-80 overflow-y-auto">
+                   {notifications.length === 0 ? (
+                     <div className="p-8 text-center text-slate-300 text-[10px] font-bold uppercase tracking-widest">Henüz bildirim yok</div>
+                   ) : (
+                     notifications.map(n => (
+                       <div key={n.id} className={cn("p-4 border-b border-slate-50 last:border-0", !n.isRead ? "bg-rose-50/30" : "opacity-60")}>
+                          <div className="flex gap-3">
+                             <div className={cn("w-2 h-2 mt-1 rounded-full shrink-0", n.type === 'add' ? "bg-blue-400" : "bg-rose-400")} />
+                             <div className="space-y-1">
+                                <p className="text-[11px] font-bold text-slate-800 leading-tight">{n.text}</p>
+                                <div className="flex items-center gap-2">
+                                   <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">{n.sender}</span>
+                                   <span className="text-[8px] font-medium text-slate-300">•</span>
+                                   <span className="text-[8px] font-medium text-slate-300">{format(n.createdAt?.toDate() || new Date(), 'HH:mm', { locale: tr })}</span>
+                                </div>
+                             </div>
+                          </div>
+                       </div>
+                     ))
+                   )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </header>
+
+        {(notifPermission === 'default' || notifPermission === 'denied') && (
+          <div className="lg:hidden bg-amber-50 border-b border-amber-100 p-3 flex items-center justify-between gap-3 sticky top-16 z-30">
+            <div className="flex gap-2 items-center">
+              <Bell className="w-4 h-4 text-amber-600 shrink-0" />
+              <p className="text-[10px] font-bold text-amber-800 leading-tight">Bildirimleri aç ve iPhone'da 'Ana Ekrana Ekle' yap!</p>
+            </div>
+            <button 
+              onClick={requestNotifPermission}
+              className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[9px] font-black uppercase whitespace-nowrap"
+            >
+              ETKİNLEŞTİR
+            </button>
+          </div>
+        )}
 
         <main className="flex-1 overflow-y-auto px-4 py-8 md:px-10 md:py-12 pb-32 lg:pb-12 custom-scrollbar focus:outline-none">
           <div className="max-w-4xl mx-auto space-y-10">

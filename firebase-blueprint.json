@@ -20,12 +20,29 @@
         "ownerId": { "type": "string", "description": "ID of the user who added it" }
       },
       "required": ["name", "address", "visited", "category", "isFavorite", "muratRating", "cansuRating"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Activity stream for Cansu & Murat",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "sender": { "type": "string" },
+        "type": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "isRead": { "type": "boolean" }
+      },
+      "required": ["text", "sender", "type", "createdAt", "isRead"]
     }
   },
   "firestore": {
     "/places/{placeId}": {
       "schema": "Place",
       "description": "Collection of places to visit and memories"
+    },
+    "/notifications/{notifId}": {
+      "schema": "Notification",
+      "description": "Live activity feed"
     }
   }
 }
